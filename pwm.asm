@@ -1,0 +1,288 @@
+.device ATmega328P
+.equ	DDRB	= 0x04
+.equ	DDRD	= 0x0a
+.equ	SPL	= 0x3d
+.equ	SPH	= 0x3e
+.equ	PORTB	= 0x05
+.equ	TIFR1	= 0x16;overflow flag is bit 0,clear it in the interupt or clear it in the loop subroutine
+.equ	TIMSK1	= 0x6f	; set to $01, overflow mode
+.equ	OVF1addr	= 0x001a	; Timer/Counter1 Overflow
+.equ	SREG	= 0x3f; bit 7 is global interupt inable
+.equ	TCCR0A	= 0x24
+.equ	TCCR0B	= 0x25
+.equ	OCR0A	= 0x27
+.equ	TIMSK0	= 0x6e	; MEMORY MAPPED
+
+;vectors:
+.equ	OVF0addr	= 0x0020	; Timer/Couner0 Overflow
+.equ	OC0Aaddr	= 0x001c	; TimerCounter0 Compare Match A
+.equ	OC0Baddr	= 0x001e	; TimerCounter0 Compare Match B
+
+variables:
+.equ waiting = 0x0500
+.equ nextbyte = 0x0501
+.equ counter = 0x0502
+.equ modout = 0x0503
+.equ modcounter = 0x0504
+
+;f(t) = A sin(2πCt + D sin(2πMt))
+parameter:
+.equ carierfreq =0x0505; C
+.equ modfreq = 0x0506; M
+.equ modamp = 0x0507; D
+.equ finalamp = 0x0508; A
+adsr:
+.equ envtimer = 0x0509
+.equ attack = 0x050a	;the slope of the attack
+.equ attacklvl = 0x050b	;the level the attack peaks at
+.equ delay = 0x050c	;the slope downward
+.equ sustain = 0x050d	;the level of sustain
+.equ release = 0x050e	;the slope it releases at
+.equ adsrstate = 0x050f;tells us what stage were in in the adsr
+
+.org 0x0000
+
+
+
+;one dot unit is 1 units
+;between charecters is 1 units
+;between letters is that 1 +2
+;between words is that 1 and 2 +4
+
+  rjmp _start
+
+.org 0x0020
+  rjmp timerinterupt
+
+_start:
+  ldi r16, 0xff
+  out ddrd,r16;why it only works on pin 6 of ddrd? idk but ive learend better than to question things
+  ldi r16,0b10000001;sets to phase set mode, no idea what the top two bits do
+  out TCCR0A,r16
+  ldi r16,0b00000001;sets the prescaller to 0
+  out TCCR0B,r16
+  ldi r16,0x00;this sets the pulse width here to 50% ******This is what well be hot swapping for audio*****
+  out OCR0A,r16 
+  ldi r16,0x01
+  sts Timsk0,r16 
+  ldi r17,0x00
+  ldi r31, HIGH(lookup_table)
+  ldi r30, 0x00
+  out SPH,r16;init stack pointer
+  out SPL,r16
+  ldi r16,0xff
+  sts waiting,r16
+
+setparameters:
+  ldi r16,2
+  sts modfreq,r16
+
+  ldi r16,2
+  sts carierfreq,r16
+
+  ldi r16,0x0
+  sts modamp,r16
+
+  ldi r16,0xff
+  sts finalamp,r16
+
+  ldi r16,0x00
+  sts envtimer,r16
+
+;mod envolope
+
+  ldi r16,0x01	;attack
+  sts attack,r16
+  ldi r16,0xff	;attack level
+  sts attacklvl,r16
+  ldi r16,0x01	;delay
+  sts delay,r16
+  ldi r16,0x80	;sustain
+  sts sustain,r16
+  ldi r16,0x01	;release
+  sts release,r16
+
+  ldi r16,0x01
+  sts adsrstate,r16
+
+
+
+
+
+  sei;this is required to make it analog
+
+
+
+
+main:
+
+  lds r16,envtimer
+
+  cpi r16,0x00
+  breq envolope 
+  rjmp nochange
+
+envolope:
+
+
+  lds r16,adsrstate
+  cpi r16,0x00
+  brne change
+  rjmp nochange
+change:
+  cpi r16,0x01
+  brne noattack
+  rjmp _attack
+noattack:
+  cpi r16,0x02 
+  brne nodelay
+  rjmp _delay
+nodelay:
+  cpi r16,0x03
+  brne nosustain
+  rjmp _sustain
+nosustain:
+  cpi r16,0x04
+  brne norelease
+  rjmp _release
+norelease:
+
+_attack:
+;  lds r16,modamp
+;  lds r17,attacklvl
+;  
+;  cp r16,r17;we can turn the ammount into a variable sustatin or delay ammount
+;
+;  brsh changestatedelay
+;
+;  lds r17,attack
+;  add r16,r17
+;  brcs changestatedelay
+;  sts modamp,r16
+;  rjmp nochange
+
+
+changestatedelay:
+  lds r16,attacklvl;not 100 this is nessisary but better safe
+  sts modamp,r16
+  ldi r16,0x02
+  sts adsrstate,r16
+
+_delay:
+;  lds r16,modamp
+;  lds r17,sustain
+
+;  cp r17,r16
+
+;  brsh changestatesustain
+  lds r16,modamp ;not sure its needed but better safe
+  lds r17,delay
+  sec
+  sub r16,r17
+  brcc changestatesustain
+  clc
+  sts modamp,r16
+  rjmp nochange
+  
+
+
+changestatesustain:
+  clc
+  lds r16,sustain
+  sts modamp,r16
+  ldi r16,0x03
+  sts adsrstate,r16
+_sustain:
+
+  rjmp nochange
+
+
+_release:
+
+
+nochange:
+
+
+
+
+
+;fm
+  lds r30,modcounter
+  lpm r16,z ;load the next adress in the look up table
+
+  lds r17,modamp
+  fmul r16,r17
+  mov r16,r01
+  
+
+  ldi r17,0x80
+  sub r16,r17 ;not sure if we need to make it into a twos compliment number but only eats 2 cycles
+  sts modout,r16 ;store it to next byte
+
+
+;incriment the look up tabel in accordance witht eh pich, here an octave
+
+  lds r16,modfreq
+  add r30,r16
+
+  sts modcounter, r30
+
+  lds r30,counter
+  lds r16,modout
+  add r30, r16
+
+
+  
+
+
+
+  
+  lpm r16,z
+  sts nextbyte,r16
+  lds r30,counter
+
+  lds r16,carierfreq
+  add r30,r16
+
+  sts counter,r30
+
+
+
+
+loop:
+  lds r16,waiting;check if the interupt has happened yet, if yes, start over
+  cpi r16,0
+  brne loop
+escape:
+  ldi r16,0xff
+  sts waiting,r16
+  rjmp main
+
+
+timerinterupt:
+  
+  lds r16,nextbyte;loads the next byte
+  out OCR0A,r16 ;sends it to the speaker a pwm
+  ldi r16,0x00
+  sts waiting,r16 ; let the other code know we have done the interupt
+  lds r16,envtimer
+  inc r16
+  sts envtimer,r16
+  reti
+
+;basic load code for later refrence
+;  lds r30,counter
+;  lpm r16,z ;load the next adress in the look up table
+;  sts nextbyte,r16 ;store it to next byte
+;  inc r30;incriment the look up tabel in accordance witht eh pich, here an octave
+;  inc r30
+;  sts counter, r30
+
+
+
+.org 0x2000
+
+lookup_table: 
+.db 0x80,0x83,0x86,0x89,0x8c,0x8f,0x92,0x95,0x98,0x9b,0x9e,0xa2,0xa5,0xa7,0xaa,0xad,0xb0,0xb3,0xb6,0xb9,0xbc,0xbe,0xc1,0xc4,0xc6,0xc9,0xcb,0xce,0xd0,0xd3,0xd5,0xd7,0xda,0xdc,0xde,0xe0,0xe2,0xe4,0xe6,0xe8,0xea,0xeb,0xed,0xee,0xf0,0xf1,0xf3,0xf4,0xf5,0xf6,0xf8,0xf9,0xfa,0xfa,0xfb,0xfc,0xfd,0xfd,0xfe,0xfe,0xfe,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe,0xfe,0xfe,0xfd,0xfd,0xfc,0xfb,0xfa,0xfa,0xf9,0xf8,0xf6,0xf5,0xf4,0xf3,0xf1,0xf0,0xee,0xed,0xeb,0xea,0xe8,0xe6,0xe4,0xe2,0xe0,0xde,0xdc,0xda,0xd7,0xd5,0xd3,0xd0,0xce,0xcb,0xc9,0xc6,0xc4,0xc1,0xbe,0xbc,0xb9,0xb6,0xb3,0xb0,0xad,0xaa,0xa7,0xa5,0xa2,0x9e,0x9b,0x98,0x95,0x92,0x8f,0x8c,0x89,0x86,0x83,0x80,0x7c,0x79,0x76,0x73,0x70,0x6d,0x6a,0x67,0x64,0x61,0x5d,0x5a,0x58,0x55,0x52,0x4f,0x4c,0x49,0x46,0x43,0x41,0x3e,0x3b,0x39,0x36,0x34,0x31,0x2f,0x2c,0x2a,0x28,0x25,0x23,0x21,0x1f,0x1d,0x1b,0x19,0x17,0x15,0x14,0x12,0x11,0x0f,0x0e,0x0c,0x0b,0x0a,0x09,0x07,0x06,0x05,0x05,0x04,0x03,0x02,0x02,0x01,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,0x01,0x02,0x02,0x03,0x04,0x05,0x05,0x06,0x07,0x09,0x0a,0x0b,0x0c,0x0e,0x0f,0x11,0x12,0x14,0x15,0x17,0x19,0x1b,0x1d,0x1f,0x21,0x23,0x25,0x28,0x2a,0x2c,0x2f,0x31,0x34,0x36,0x39,0x3b,0x3e,0x41,0x43,0x46,0x49,0x4c,0x4f,0x52,0x55,0x58,0x5a,0x5d,0x61,0x64,0x67,0x6a,0x6d,0x70,0x73,0x76,0x79,0x7c
+
+;i think it failed because some of them were written as 0, f & c.
